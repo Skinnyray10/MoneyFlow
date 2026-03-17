@@ -10,9 +10,13 @@ export default function App() {
   const [cantidad, setCantidad] = useState('');
   const [descripcion, setDescripcion] = useState('');
   const [categoria, setCategoria] = useState('Comida'); 
-  
-  // Le decimos a TypeScript que este es un arreglo que puede contener cualquier cosa (any)
   const [gastos, setGastos] = useState<any[]>([]);
+
+  // ¡NUEVO! Función para saber en qué mes estamos (Ejemplo: "2026-3")
+  const obtenerMesActual = () => {
+    const hoy = new Date();
+    return `${hoy.getFullYear()}-${hoy.getMonth() + 1}`; // getMonth empieza en 0, por eso le sumamos 1
+  };
 
   useEffect(() => {
     cargarDatos(); 
@@ -24,14 +28,26 @@ export default function App() {
       if (gastosGuardados !== null) {
         const listaTraducida = JSON.parse(gastosGuardados);
         setGastos(listaTraducida); 
-        
-        let totalCalculado = 0;
-        listaTraducida.forEach((gasto: any) => totalCalculado = totalCalculado + gasto.monto);
-        setTotal(totalCalculado); 
+        recalcularTotal(listaTraducida); // Usamos una función separada para calcular el total
       }
     } catch (error) {
       console.log('Error al cargar datos:', error);
     }
+  };
+
+  // ¡NUEVO! Función inteligente que solo suma los gastos del mes en curso
+  const recalcularTotal = (lista: any[]) => {
+    const mesActual = obtenerMesActual();
+    let totalCalculado = 0;
+    
+    lista.forEach((gasto: any) => {
+      // Solo sumamos si la etiqueta del gasto coincide con nuestro mes actual
+      if (gasto.mes === mesActual) {
+        totalCalculado += gasto.monto;
+      }
+    });
+    
+    setTotal(totalCalculado);
   };
 
   const guardarDatos = async (nuevaListaDeGastos: any) => {
@@ -50,12 +66,14 @@ export default function App() {
         id: Date.now().toString(), 
         nombre: descripcion,
         monto: numero,
-        categoria: categoria 
+        categoria: categoria,
+        // ¡NUEVO! Le ponemos el sello del mes actual al "expediente"
+        mes: obtenerMesActual() 
       };
       
       const nuevaLista = [...gastos, nuevoGasto];
       setGastos(nuevaLista); 
-      setTotal(total + numero); 
+      recalcularTotal(nuevaLista); // Recalculamos
       setCantidad(''); 
       setDescripcion('');
       guardarDatos(nuevaLista);
@@ -65,41 +83,45 @@ export default function App() {
   };
 
   const eliminarGasto = (idParaBorrar: string) => {
-    const gastoEncontrado = gastos.find((gasto) => gasto.id === idParaBorrar);
     const listaFiltrada = gastos.filter((gasto) => gasto.id !== idParaBorrar);
-    
     setGastos(listaFiltrada); 
-    setTotal(total - gastoEncontrado.monto); 
+    recalcularTotal(listaFiltrada); // Recalculamos
     guardarDatos(listaFiltrada);
   };
 
   const reiniciarTodo = () => {
-    setTotal(0);
     setGastos([]); 
+    setTotal(0);
     guardarDatos([]);
   };
 
-  // ¡NUEVA LÓGICA! Calculamos cuánto hemos gastado por categoría
-  const resumenCategorias = gastos.reduce((acumulador, gasto) => {
-    const cat = gasto.categoria;
-    // Si la categoría aún no existe en nuestro resumen, la creamos en 0
-    if (!acumulador[cat]) {
-      acumulador[cat] = 0;
-    }
-    // Le sumamos el monto del gasto actual
-    acumulador[cat] += gasto.monto;
-    return acumulador;
-  }, {});
+  // ¡NUEVO! El resumen ahora también filtra por el mes actual
+  const mesActual = obtenerMesActual();
+  const resumenCategorias = gastos
+    .filter((gasto) => gasto.mes === mesActual) // Primero filtramos al "cadenero"
+    .reduce((acumulador, gasto) => {            // Luego hacemos los montoncitos
+      const cat = gasto.categoria;
+      if (!acumulador[cat]) {
+        acumulador[cat] = 0;
+      }
+      acumulador[cat] += gasto.monto;
+      return acumulador;
+    }, {} as Record<string, number>);
+
+  // ¡NUEVO! Obtenemos el nombre del mes para ponerlo bonito en el título
+  const nombreMes = new Date().toLocaleString('es-ES', { month: 'long' }).toUpperCase();
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>¡Bienvenido a MoneyFlow! 💸</Text>
-      <Text style={styles.monto}>Total gastado hoy: ${total}</Text>
+      {/* Actualizamos los títulos para que sean dinámicos */}
+      <Text style={styles.title}>MoneyFlow 💸</Text>
+      <Text style={styles.subtituloMes}>GASTOS DE {nombreMes}</Text>
+      <Text style={styles.monto}>Total: ${total}</Text>
 
-      {/* ¡NUEVO! Cajita visual para mostrar el resumen por categorías */}
-      {gastos.length > 0 && (
+      {/* Solo mostramos el resumen si hay gastos ESTE MES */}
+      {Object.keys(resumenCategorias).length > 0 && (
         <View style={styles.resumenContainer}>
-          <Text style={styles.resumenTitulo}>Resumen por categoría:</Text>
+          <Text style={styles.resumenTitulo}>Resumen del mes:</Text>
           <View style={styles.resumenGrid}>
             {Object.keys(resumenCategorias).map((cat) => (
               <View key={cat} style={styles.resumenItem}>
@@ -145,10 +167,11 @@ export default function App() {
         </View>
       </View>
 
-      <Text style={styles.subtitulo}>Historial:</Text>
+      <Text style={styles.subtitulo}>Historial del mes:</Text>
       
       <FlatList 
-        data={gastos} 
+        // ¡NUEVO! A la lista visual también le pasamos solo los gastos de este mes
+        data={gastos.filter(g => g.mes === mesActual)} 
         keyExtractor={(item) => item.id} 
         renderItem={({ item }) => ( 
           <View style={styles.itemGasto}>
@@ -173,10 +196,10 @@ export default function App() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f5f5f5', paddingTop: 60, paddingHorizontal: 20 },
-  title: { fontSize: 24, fontWeight: 'bold', marginBottom: 5, textAlign: 'center', color: '#333' },
-  monto: { fontSize: 22, marginBottom: 15, color: '#27ae60', fontWeight: 'bold', textAlign: 'center' },
+  title: { fontSize: 28, fontWeight: 'bold', textAlign: 'center', color: '#2c3e50' },
+  subtituloMes: { fontSize: 14, fontWeight: 'bold', textAlign: 'center', color: '#7f8c8d', marginBottom: 5, letterSpacing: 1 },
+  monto: { fontSize: 26, marginBottom: 15, color: '#27ae60', fontWeight: 'bold', textAlign: 'center' },
   
-  // Estilos del nuevo resumen
   resumenContainer: { backgroundColor: '#e8f4f8', padding: 15, borderRadius: 10, marginBottom: 20 },
   resumenTitulo: { fontWeight: 'bold', color: '#2c3e50', marginBottom: 10, textAlign: 'center' },
   resumenGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 10 },
