@@ -1,8 +1,19 @@
 import { useState, useEffect } from 'react'; 
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View, Button, TextInput, FlatList, TouchableOpacity } from 'react-native'; 
+import { StyleSheet, Text, View, Button, TextInput, FlatList, TouchableOpacity, Dimensions } from 'react-native'; 
 import AsyncStorage from '@react-native-async-storage/async-storage'; 
 import { Picker } from '@react-native-picker/picker';
+import { PieChart } from 'react-native-chart-kit';
+
+const screenWidth = Dimensions.get('window').width;
+
+const coloresCategoria: Record<string, string> = {
+  'Comida': '#e74c3c',
+  'Transporte': '#3498db',
+  'Hogar': '#2ecc71',
+  'Ocio': '#9b59b6',
+  'Otros': '#f1c40f'
+};
 
 export default function App() {
   
@@ -11,11 +22,13 @@ export default function App() {
   const [descripcion, setDescripcion] = useState('');
   const [categoria, setCategoria] = useState('Comida'); 
   const [gastos, setGastos] = useState<any[]>([]);
+  
+  // ¡NUEVO! Memoria para guardar lo que nos diga el asistente
+  const [mensajeIA, setMensajeIA] = useState('');
 
-  // ¡NUEVO! Función para saber en qué mes estamos (Ejemplo: "2026-3")
   const obtenerMesActual = () => {
     const hoy = new Date();
-    return `${hoy.getFullYear()}-${hoy.getMonth() + 1}`; // getMonth empieza en 0, por eso le sumamos 1
+    return `${hoy.getFullYear()}-${hoy.getMonth() + 1}`; 
   };
 
   useEffect(() => {
@@ -28,26 +41,24 @@ export default function App() {
       if (gastosGuardados !== null) {
         const listaTraducida = JSON.parse(gastosGuardados);
         setGastos(listaTraducida); 
-        recalcularTotal(listaTraducida); // Usamos una función separada para calcular el total
+        recalcularTotal(listaTraducida); 
       }
     } catch (error) {
       console.log('Error al cargar datos:', error);
     }
   };
 
-  // ¡NUEVO! Función inteligente que solo suma los gastos del mes en curso
   const recalcularTotal = (lista: any[]) => {
     const mesActual = obtenerMesActual();
     let totalCalculado = 0;
-    
     lista.forEach((gasto: any) => {
-      // Solo sumamos si la etiqueta del gasto coincide con nuestro mes actual
       if (gasto.mes === mesActual) {
         totalCalculado += gasto.monto;
       }
     });
-    
     setTotal(totalCalculado);
+    // Borramos el mensaje del asistente si cambia el dinero, para que tenga que volver a analizar
+    setMensajeIA(''); 
   };
 
   const guardarDatos = async (nuevaListaDeGastos: any) => {
@@ -67,13 +78,12 @@ export default function App() {
         nombre: descripcion,
         monto: numero,
         categoria: categoria,
-        // ¡NUEVO! Le ponemos el sello del mes actual al "expediente"
         mes: obtenerMesActual() 
       };
       
       const nuevaLista = [...gastos, nuevoGasto];
       setGastos(nuevaLista); 
-      recalcularTotal(nuevaLista); // Recalculamos
+      recalcularTotal(nuevaLista); 
       setCantidad(''); 
       setDescripcion('');
       guardarDatos(nuevaLista);
@@ -85,21 +95,22 @@ export default function App() {
   const eliminarGasto = (idParaBorrar: string) => {
     const listaFiltrada = gastos.filter((gasto) => gasto.id !== idParaBorrar);
     setGastos(listaFiltrada); 
-    recalcularTotal(listaFiltrada); // Recalculamos
+    recalcularTotal(listaFiltrada); 
     guardarDatos(listaFiltrada);
   };
 
   const reiniciarTodo = () => {
     setGastos([]); 
     setTotal(0);
+    setMensajeIA('');
     guardarDatos([]);
   };
 
-  // ¡NUEVO! El resumen ahora también filtra por el mes actual
   const mesActual = obtenerMesActual();
+  
   const resumenCategorias = gastos
-    .filter((gasto) => gasto.mes === mesActual) // Primero filtramos al "cadenero"
-    .reduce((acumulador, gasto) => {            // Luego hacemos los montoncitos
+    .filter((gasto) => gasto.mes === mesActual) 
+    .reduce((acumulador, gasto) => {            
       const cat = gasto.categoria;
       if (!acumulador[cat]) {
         acumulador[cat] = 0;
@@ -108,28 +119,91 @@ export default function App() {
       return acumulador;
     }, {} as Record<string, number>);
 
-  // ¡NUEVO! Obtenemos el nombre del mes para ponerlo bonito en el título
+  const datosGrafica = Object.keys(resumenCategorias).map((cat) => {
+    return {
+      name: cat,
+      monto: resumenCategorias[cat],
+      color: coloresCategoria[cat] || '#95a5a6', 
+      legendFontColor: '#333',
+      legendFontSize: 12
+    };
+  });
+
+  // ¡NUEVO! El cerebro de nuestro Asistente Financiero
+  const analizarGastos = () => {
+    if (total === 0) {
+      setMensajeIA("Aún no tienes gastos este mes. ¡Sigue así!");
+      return;
+    }
+
+    let categoriaMayor = '';
+    let montoMayor = 0;
+
+    // Buscamos en qué categoría gastaste más
+    for (const [cat, monto] of Object.entries(resumenCategorias)) {
+      if (monto > montoMayor) {
+        montoMayor = monto;
+        categoriaMayor = cat;
+      }
+    }
+
+    // Calculamos qué porcentaje representa ese gasto mayor
+    const porcentaje = Math.round((montoMayor / total) * 100);
+
+    // Damos un consejo personalizado basado en la categoría perdedora
+    let consejo = '';
+    if (categoriaMayor === 'Comida') {
+      consejo = "🍔 ¡Estás comiendo mucho fuera! Intenta cocinar más en casa para ahorrar.";
+    } else if (categoriaMayor === 'Transporte') {
+      consejo = "🚗 El transporte te está saliendo caro. ¿Has considerado compartir viaje o usar transporte público?";
+    } else if (categoriaMayor === 'Ocio') {
+      consejo = "🎬 ¡Ojo con las salidas! La diversión está absorbiendo tu presupuesto.";
+    } else if (categoriaMayor === 'Hogar') {
+      consejo = "🏠 Los gastos de la casa dominan este mes. Revisa si puedes apagar focos o reducir servicios.";
+    } else {
+      consejo = "📦 Vigila esos gastos misceláneos, los 'gastos hormiga' son peligrosos.";
+    }
+
+    // Armamos el mensaje final
+    const mensajeFinal = `Tu mayor gasto es en ${categoriaMayor} ($${montoMayor}), lo cual representa el ${porcentaje}% de tus gastos.\n\n${consejo}`;
+    setMensajeIA(mensajeFinal);
+  };
+
   const nombreMes = new Date().toLocaleString('es-ES', { month: 'long' }).toUpperCase();
 
   return (
     <View style={styles.container}>
-      {/* Actualizamos los títulos para que sean dinámicos */}
       <Text style={styles.title}>MoneyFlow 💸</Text>
       <Text style={styles.subtituloMes}>GASTOS DE {nombreMes}</Text>
       <Text style={styles.monto}>Total: ${total}</Text>
 
-      {/* Solo mostramos el resumen si hay gastos ESTE MES */}
-      {Object.keys(resumenCategorias).length > 0 && (
-        <View style={styles.resumenContainer}>
-          <Text style={styles.resumenTitulo}>Resumen del mes:</Text>
-          <View style={styles.resumenGrid}>
-            {Object.keys(resumenCategorias).map((cat) => (
-              <View key={cat} style={styles.resumenItem}>
-                <Text style={styles.resumenCatNombre}>{cat}</Text>
-                <Text style={styles.resumenCatMonto}>${resumenCategorias[cat]}</Text>
-              </View>
-            ))}
-          </View>
+      {datosGrafica.length > 0 && (
+        <View style={styles.graficaContainer}>
+          <PieChart
+            data={datosGrafica}
+            width={screenWidth - 40} 
+            height={180}
+            chartConfig={{
+              color: (opacity = 1) => `rgba(0, 0, 0, ${opacity})`,
+            }}
+            accessor={"monto"} 
+            backgroundColor={"transparent"}
+            paddingLeft={"15"}
+            center={[10, 0]}
+            absolute 
+          />
+        </View>
+      )}
+
+      {/* ¡NUEVO! Sección del Asistente */}
+      {total > 0 && (
+        <View style={styles.iaContainer}>
+          <Button title="🤖 Analizar mis gastos" onPress={analizarGastos} color="#8e44ad" />
+          
+          {/* Solo mostramos el texto si el asistente ya nos dio un mensaje */}
+          {mensajeIA !== '' && (
+            <Text style={styles.iaMensaje}>{mensajeIA}</Text>
+          )}
         </View>
       )}
       
@@ -170,7 +244,6 @@ export default function App() {
       <Text style={styles.subtitulo}>Historial del mes:</Text>
       
       <FlatList 
-        // ¡NUEVO! A la lista visual también le pasamos solo los gastos de este mes
         data={gastos.filter(g => g.mes === mesActual)} 
         keyExtractor={(item) => item.id} 
         renderItem={({ item }) => ( 
@@ -198,14 +271,13 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f5f5f5', paddingTop: 60, paddingHorizontal: 20 },
   title: { fontSize: 28, fontWeight: 'bold', textAlign: 'center', color: '#2c3e50' },
   subtituloMes: { fontSize: 14, fontWeight: 'bold', textAlign: 'center', color: '#7f8c8d', marginBottom: 5, letterSpacing: 1 },
-  monto: { fontSize: 26, marginBottom: 15, color: '#27ae60', fontWeight: 'bold', textAlign: 'center' },
+  monto: { fontSize: 26, marginBottom: 5, color: '#27ae60', fontWeight: 'bold', textAlign: 'center' },
   
-  resumenContainer: { backgroundColor: '#e8f4f8', padding: 15, borderRadius: 10, marginBottom: 20 },
-  resumenTitulo: { fontWeight: 'bold', color: '#2c3e50', marginBottom: 10, textAlign: 'center' },
-  resumenGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 10 },
-  resumenItem: { backgroundColor: 'white', padding: 8, borderRadius: 8, minWidth: '45%', alignItems: 'center' },
-  resumenCatNombre: { fontSize: 12, color: '#7f8c8d' },
-  resumenCatMonto: { fontSize: 16, fontWeight: 'bold', color: '#2980b9' },
+  graficaContainer: { alignItems: 'center', justifyContent: 'center', marginBottom: 10 },
+
+  // ¡NUEVO! Estilos para el Asistente
+  iaContainer: { marginBottom: 20 },
+  iaMensaje: { marginTop: 10, padding: 15, backgroundColor: '#f3e5f5', color: '#8e44ad', borderRadius: 8, fontStyle: 'italic', lineHeight: 22, fontWeight: '500' },
 
   formulario: { backgroundColor: 'white', padding: 15, borderRadius: 10, marginBottom: 20, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 5, elevation: 3 },
   input: { borderWidth: 1, borderColor: '#ccc', padding: 10, borderRadius: 8, marginBottom: 10, fontSize: 16 },
